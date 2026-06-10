@@ -1,0 +1,26 @@
+# Render blueprint for the FastAPI backend (free tier).
+# Render auto-detects this file when you create a "Blueprint" from the repo.
+services:
+  - type: web
+    name: fake-news-detector-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      # Groq is free (no credit card) — set this in the Render dashboard.
+      - key: GROQ_API_KEY
+        sync: false
+      # Evidence search: either a Tavily key, or set SEARCH_PROVIDER=ddgs (keyless).
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: SEARCH_PROVIDER
+        sync: false
+      # Optional: lock CORS to your exact Vercel URL once you have it.
+      # The backend already allows any *.vercel.app origin by default.
+      - key: CORS_ORIGINS
+        sync: false
