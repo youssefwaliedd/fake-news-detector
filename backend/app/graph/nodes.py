@@ -34,6 +34,9 @@ logger = logging.getLogger("graph.nodes")
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
+# Fusion tuning: pseudo-claims that pull a tiny evidence sample back toward neutral (0.5).
+SHRINK_PRIOR = 0.5
+
 
 def _has_groq() -> bool:
     return bool(get_settings().groq_api_key.strip())
@@ -179,29 +182,48 @@ def fuse(state: GraphState) -> dict:
     settings = get_settings()
     assessments = state.get("assessments", [])
 
-    # LLM signal: share of *checked* claims that were refuted.
+    # ---- Evidence signal ----
+    # Weight each checked claim by the model's OWN confidence, so a tentative
+    # "refuted (0.5)" counts for far less than a sure "refuted (0.95)". Then shrink
+    # toward neutral by a small prior so a single claim can't peg the score at 0 or 1.
     checked = [a for a in assessments if a["verdict"] in ("supported", "refuted")]
-    llm_fake_share = (
-        sum(1 for a in checked if a["verdict"] == "refuted") / len(checked) if checked else None
-    )
+    n = len(checked)
+    if n:
+        contributions = []
+        for a in checked:
+            conf = min(max(float(a.get("confidence", 0.5)), 0.0), 1.0)
+            # confident refuted -> ~1 ; confident supported -> ~0 ; unsure -> ~0.5
+            contributions.append(0.5 + 0.5 * conf if a["verdict"] == "refuted" else 0.5 - 0.5 * conf)
+        llm_fake = (sum(contributions) + 0.5 * SHRINK_PRIOR) / (n + SHRINK_PRIOR)
+    else:
+        llm_fake = None
 
     # ML signal: only trust it if a model was actually trained.
     ml_score = state.get("ml_score") if state.get("ml_available") else None
 
-    fake_prob, basis = _blend(ml_score, llm_fake_share, settings.ml_weight)
+    fake_prob, basis = _blend(ml_score, llm_fake, settings.ml_weight)
 
     if fake_prob is None:
         final_label, confidence = "uncertain", 0.0
-    elif fake_prob >= settings.fake_threshold:
-        final_label, confidence = "fake", fake_prob
-    elif fake_prob <= settings.real_threshold:
-        final_label, confidence = "real", 1.0 - fake_prob
     else:
-        final_label, confidence = "uncertain", 1.0 - abs(fake_prob - 0.5) * 2
+        if fake_prob >= settings.fake_threshold:
+            final_label = "fake"
+        elif fake_prob <= settings.real_threshold:
+            final_label = "real"
+        else:
+            final_label = "uncertain"
+
+        # Confidence reflects BOTH how far the score is from neutral (margin) AND how
+        # much evidence backs it (volume). The ceiling means thin evidence can never
+        # read as near-certain — the fix for confident false positives off one claim.
+        margin = abs(fake_prob - 0.5) * 2
+        signals = n + (1 if ml_score is not None else 0)
+        ceiling = 1.0 - 0.4 / max(signals, 1)  # 1 signal -> 0.60, 2 -> 0.80, 3 -> 0.87
+        confidence = min(1.0 - margin if final_label == "uncertain" else margin, ceiling)
 
     # Dedupe sources across all claims.
     sources = _dedupe_sources(assessments)
-    rationale = _build_rationale(final_label, fake_prob, ml_score, llm_fake_share, checked, basis)
+    rationale = _build_rationale(final_label, fake_prob, ml_score, checked, basis, confidence)
 
     return {
         "final_label": final_label,
@@ -236,16 +258,18 @@ def _dedupe_sources(assessments) -> list[Source]:
     return out
 
 
-def _build_rationale(label, fake_prob, ml_score, llm_fake_share, checked, basis) -> str:
+def _build_rationale(label, fake_prob, ml_score, checked, basis, confidence) -> str:
     if fake_prob is None:
         return (
             "Not enough signal to judge: the ML model isn't trained and no claims "
             "could be verified against evidence. Treat as unverified."
         )
-    parts = [f"Overall fake-probability {fake_prob:.0%} (based on {basis})."]
+    parts = [f"Overall fake-probability {fake_prob:.0%} (based on {basis}), confidence {confidence:.0%}."]
     if ml_score is not None:
         parts.append(f"ML first-pass put P(fake) at {ml_score:.0%}.")
-    if llm_fake_share is not None and checked:
+    if checked:
         refuted = sum(1 for a in checked if a["verdict"] == "refuted")
         parts.append(f"Evidence check refuted {refuted}/{len(checked)} verifiable claims.")
+        if len(checked) == 1 and ml_score is None:
+            parts.append("Only one claim could be checked, so confidence is held low.")
     return " ".join(parts)
