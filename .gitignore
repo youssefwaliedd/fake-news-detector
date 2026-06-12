@@ -12,9 +12,10 @@ venv/
 backend/.env
 frontend/.env
 
-# --- ML artifacts & data (regenerate via app.ml.train) ---
-backend/app/ml/artifacts/*.pkl
+# --- ML training data (large; regenerate via download) ---
 backend/data/
+# NOTE: the trained model artifacts (app/ml/artifacts/*.pkl, ~1 MB) ARE committed
+# so the deployed app ships with the classifier. Retrain with `python -m app.ml.train`.
 
 # --- Node / Vite ---
 node_modules/

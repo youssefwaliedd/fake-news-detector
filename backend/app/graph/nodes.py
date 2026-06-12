@@ -36,6 +36,8 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 # Fusion tuning: pseudo-claims that pull a tiny evidence sample back toward neutral (0.5).
 SHRINK_PRIOR = 0.5
+# The ML model is article-trained; ignore its vote on inputs shorter than this (words).
+ML_MIN_WORDS = 50
 
 
 def _has_groq() -> bool:
@@ -66,15 +68,26 @@ def ingest(state: GraphState) -> dict:
 # --------------------------------------------------------------------------- #
 @timed_node("ml_classify")
 def ml_classify(state: GraphState) -> dict:
-    result = ml_predict(state.get("article_text", ""))
+    text = state.get("article_text", "") or ""
+    result = ml_predict(text)
+
+    # The TF-IDF model is trained on full news *articles*. On a bare one-sentence
+    # claim (very different from its training distribution) it tends to cry "fake",
+    # which would wrongly drag down true short claims. So only let it vote when the
+    # input is article-length; for short claims the evidence check decides alone.
+    applicable = result["available"] and len(text.split()) >= ML_MIN_WORDS
+    if result["available"] and not applicable:
+        note = f"ML first-pass skipped (input too short for the article-trained model)."
+    elif applicable:
+        note = f"ML first-pass: {result['label']} (P_fake={result['score']:.2f})."
+    else:
+        note = "ML first-pass: model not trained."
+
     return {
         "ml_score": result["score"],
         "ml_label": result["label"],
-        "ml_available": result["available"],
-        "log": [
-            f"ML first-pass: {result['label']} (P_fake={result['score']:.2f}"
-            f"{'' if result['available'] else ', model not trained'})."
-        ],
+        "ml_available": applicable,
+        "log": [note],
     }
 
 
