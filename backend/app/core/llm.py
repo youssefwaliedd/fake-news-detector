@@ -32,6 +32,9 @@ def get_llm(role: str) -> ChatGroq:
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         timeout=120,
+        # Both LLM roles must emit JSON; forcing JSON mode stops the smaller model
+        # from occasionally returning prose/markdown that fails to parse.
+        model_kwargs={"response_format": {"type": "json_object"}},
     )
 
 

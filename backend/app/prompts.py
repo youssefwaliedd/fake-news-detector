@@ -15,6 +15,11 @@ Return STRICT JSON only, no prose:
 Rules:
 - At most {max_claims} claims, ordered by importance.
 - Each claim must be a single self-contained sentence understandable without the article.
+- Extract each claim EXACTLY as the text asserts it — preserve the author's assertion even if \
+you believe it is false or poorly worded. Do NOT correct it, negate it, fact-check it, or rephrase \
+it into what is actually true. Deciding truth is the verifier's job, not yours; your job is to \
+capture what was claimed so it can be checked. (E.g. from "the World Cup happens every 5 years not \
+4", extract "The World Cup happens every 5 years" — never "...every 4 years".)
 - If there are no verifiable factual claims, return {"claims": []}."""
 
 CLAIM_EXTRACTION_USER = """Article / statement:

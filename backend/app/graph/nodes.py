@@ -101,23 +101,34 @@ def extract_claims(state: GraphState) -> dict:
         return {"claims": [], "log": ["No text to extract claims from."]}
 
     settings = get_settings()
+    claims: list[str] = []
+    via_llm = False
     if _has_groq():
         try:
             llm = get_llm("extractor")
             messages = [
-                ("system", CLAIM_EXTRACTION_SYSTEM.format(max_claims=settings.max_claims)),
+                # NB: use replace, not .format — the system prompt contains literal JSON
+                # braces ({"claims": ...}) that str.format would misread as fields.
+                ("system", CLAIM_EXTRACTION_SYSTEM.replace("{max_claims}", str(settings.max_claims))),
                 ("user", CLAIM_EXTRACTION_USER.format(text=text[:6000])),
             ]
             data = extract_json(llm.invoke(messages).content)
             claims = [c.strip() for c in data.get("claims", []) if c.strip()][: settings.max_claims]
-            return {"claims": claims, "log": [f"Extracted {len(claims)} check-worthy claims."]}
-        except Exception as exc:  # noqa: BLE001 - fall back to heuristic
+            via_llm = True
+        except Exception as exc:  # noqa: BLE001 - fall back to heuristic below
             logger.warning("claim_extraction_failed", extra={"error": str(exc)})
 
-    # Heuristic fallback (no LLM key): take the first few substantial sentences.
-    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if len(s.strip()) > 40]
-    claims = sentences[: settings.max_claims]
-    return {"claims": claims, "log": [f"Extracted {len(claims)} claims (heuristic, no LLM key)."]}
+    # Fallback when the LLM is unavailable, errored, or found nothing: keep substantial
+    # sentences — and if the input is itself a short single claim, use it whole, so a
+    # one-liner like "the World Cup happens every 5 years" always gets fact-checked
+    # instead of vanishing into a 0-claim "uncertain".
+    if not claims:
+        sentences = [s.strip() for s in _SENTENCE_RE.split(text) if len(s.strip()) > 40]
+        claims = sentences[: settings.max_claims] or ([text] if len(text) <= 300 else [])
+        via_llm = False
+
+    suffix = "." if via_llm else " (fallback)."
+    return {"claims": claims, "log": [f"Extracted {len(claims)} claim(s){suffix}"]}
 
 
 # --------------------------------------------------------------------------- #
