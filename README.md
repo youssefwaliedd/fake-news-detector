@@ -1,5 +1,8 @@
 # Fake News Detector
 
+**🔗 Live demo: https://fake-news-detector-xi-gold.vercel.app**
+*(First load may take ~50s while the free-tier backend wakes up.)*
+
 A **hybrid** credibility checker. Paste a claim/article or drop in an article URL, and it returns
 a **Real / Fake / Uncertain** verdict with a confidence score, a claim-by-claim breakdown, and
 cited web evidence.
